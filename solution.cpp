@@ -3,23 +3,11 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <memory>
 #include <stdint.h>
 
 
 using namespace std;
-
-bool g_debugOn = false;
-bool g_assertOn = true;
-void AssertImpl(bool valid, int linenumber)
-{
-    if ((g_debugOn||g_assertOn) && !valid)
-    {
-        cout << "ASSERT AT LINE: " << linenumber << endl;
-    }
-}
-
-#define ASSERT(expr) {AssertImpl(!!(expr), __LINE__);}
-
 
 struct subsequence
 {
@@ -28,219 +16,253 @@ struct subsequence
     int64_t sum;
 };
 
+struct node
+{
+    bool isLeaf;
+    shared_ptr<node> left;
+    shared_ptr<node> right;
+    size_t indexFirst; // index of first element from array
+    size_t indexLast;  // index of last element from array
+    int64_t minValue;
+    int64_t maxValue;
 
-struct pair_hash {
-    template <class T1, class T2>
-    std::size_t operator () (const std::pair<T1, T2>& p) const {
-        auto h1 = std::hash<T1>{}(p.first);
-        auto h2 = std::hash<T2>{}(p.second);
-        return h1 ^ h2;
+
+    // initialize a leaf node that represents a small subsequence of items
+    // in a summation array
+    // iFirst: first index in the summation array
+    // iLast: last index in the summation array
+    // smallest: smallest value in this subsequence
+    // largest: largest value in this subsequence
+    node(size_t iFirst, size_t iLast, int64_t smallest, int64_t largest) :
+        isLeaf(true),
+        left(nullptr),
+        right(nullptr),
+        indexFirst(iFirst),
+        indexLast(iLast),
+        minValue(smallest),
+        maxValue(largest)
+    {
+    }
+
+    // initialize a parent node from a pair of child nodes
+    node(const shared_ptr<node>& l, const shared_ptr<node>& r) :
+        isLeaf(false),
+        left(l),
+        right(r)
+    {
+
+        // working assumption is that left and right are both non-null
+        // We can trivially allow parent node with one child if we fix the min/max first/last
+        // calculations below. But for now, just assume both are non-null
+        indexFirst = l->indexFirst;
+        indexLast = r->indexLast;
+        minValue = (l->minValue < r->minValue) ? l->minValue : r->minValue;
+        maxValue = (l->maxValue > r->maxValue) ? l->maxValue : r->maxValue;
+    }
+
+    // do a binary search for the largest INDEX in the array that is <= maxSum
+    // ignore any indices that are less than "leftEdge"
+    // return true on success and assign the discovered index valut to resultIndex
+    // otherwise, return false, and leave resultIndex unchanged
+    bool search(const vector<int64_t>& summations, int64_t maxSum, size_t leftEdge, size_t& resultIndex)
+    {
+        if (this->indexLast < leftEdge)
+        {
+            return false;
+        }
+
+        if (maxSum < this->minValue)
+        {
+            return false;
+        }
+
+        if (this->isLeaf)
+        {
+            // seach the summation array looking for the largestIndex referencing a value <= maxSum
+
+            bool found = false;
+
+            for (size_t i = indexFirst; i <= indexLast; i++)
+            {
+                if (summations[i] <= maxSum)
+                {
+                    found = true;
+                    resultIndex = i;
+                }
+            }
+            return found;
+        }
+
+        if (this->right != nullptr)
+        {
+            if (this->right->search(summations, maxSum, leftEdge, resultIndex))
+            {
+                return true;
+            }
+        }
+
+        if (this->left != nullptr)
+        {
+            return this->left->search(summations, maxSum, leftEdge, resultIndex);
+        }
+
+        // assert - we should never get here
+        return false;
     }
 };
 
-class Cache
+
+void buildRunningSumArray(const vector<int>& items, vector<int64_t>& summations)
 {
-    unordered_map<pair<int, int>, subsequence, pair_hash> _cache;
-    unordered_set<pair<int, int>, pair_hash> _deadPaths;
+    summations.clear();
+    summations.resize(items.size());
+    const size_t len = items.size();
+    int64_t sum = 0;
 
-public:
-    void insert(int start, int end, const subsequence& seq)
+    for (size_t i = 0; i < len; i++)
     {
-        _cache[{start, end}] = seq;
-    }
-
-    bool lookup(int start, int end, subsequence& result)
-    {
-        auto itor = _cache.find({ start,end });
-        if (itor != _cache.end())
-        {
-            result = itor->second;
-            return true;
-        }
-        return false;
-    }
-
-    void addDeadPath(int start, int end)
-    {
-        _deadPaths.insert({ start,end });
-    }
-
-    bool isDeadPath(int start, int end)
-    {
-        return (_deadPaths.find({ start,end }) != _deadPaths.end());
-    }
-};
-
-bool recursiveReduction(const vector<int>& items, int64_t maxSum, int start, int end, int64_t currentSum, subsequence& result, Cache& cache)
-{
-    if (g_debugOn)
-    {
-        cout << "start=" << start << "   end=" << end << endl;
-    }
-
-    // lookup in the cache so we don't recurse needlessly
-    if (cache.lookup(start, end, result))
-    {
-        return true;
-    }
-
-    if (cache.isDeadPath(start, end))
-    {
-        return false;
-    }
-
-    if (end < start)
-    {
-        // THIS SHOULD NEVER HAPPEN
-        ASSERT(false);
-        return false;
-    }
-
-    if (currentSum <= maxSum)
-    {
-        // stop - we've found a solution that isn't going to get longer
-        result.length = end - start + 1;
-        result.sum = currentSum;
-        result.startIndex = start;
-
-        cache.insert(start, end, result);
-        return true;
-    }
-
-
-    if (start == end)
-    {
-        ASSERT(currentSum == items[start]);
-        cache.addDeadPath(start, end);
-        return false;
-    }
-
-    subsequence rightResult = {};
-    subsequence leftResult = {};
-    bool canReduceLeft, canReduceRight;
-
-    canReduceLeft = recursiveReduction(items, maxSum, start + 1, end, currentSum - items[start], leftResult, cache);
-    canReduceRight = recursiveReduction(items,maxSum, start, end - 1, currentSum - items[end], rightResult, cache);
-
-
-    if (canReduceLeft && canReduceRight)
-    {
-        if (leftResult.length == rightResult.length)
-        {
-            if (leftResult.startIndex <= rightResult.startIndex)
-            {
-                result = leftResult;
-            }
-            else
-            {
-                result = rightResult;
-            }
-        }
-        else if (leftResult.length >= rightResult.length)
-        {
-            result = leftResult;
-        }
-        else
-        {
-            result = rightResult;
-        }
-        cache.insert(start, end, result);
-        return true;
-    }
-    else if (canReduceLeft)
-    {
-        result = leftResult;
-        cache.insert(start, end, result);
-        return true;
-    }
-    else if (canReduceRight)
-    {
-        result = rightResult;
-        cache.insert(start, end, result);
-        return true;
-    }
-    else
-    {
-        cache.addDeadPath(start, end);
-        return false;
-    }
-}
-
-bool useRecursiveReduction(const vector<int>& items, int maxSum, subsequence& result)
-{
-    Cache cache;
-    int64_t fullSum = 0;
-    for_each(items.begin(), items.end(), [&fullSum](int x) {fullSum += x; });
-
-    return recursiveReduction(items, maxSum, 0, items.size()-1, fullSum, result, cache);
-}
-
-
-bool bruteForce(const vector<int>& items, int maxSum, subsequence& result)
-{
-    subsequence best = {};
-
-    int N = items.size();
-
-    for (int i = 0; i < N; i++)
-    {
-        if ((N - i) <= best.length)
-        {
-            // no point in continuing if we can't do any better
-            break;
-        }
-
-        subsequence current;
-        current.length = 0;
-        current.startIndex = i;
-        current.sum = 0;
-
-        for (int j = i; j < N; j++)
-        {
-            current.sum += items[j];
-            current.length += 1;
-            if ((current.sum <= maxSum) && (current.length > best.length))
-            {
-                best = current;
-            }
-        }
-    }
-
-    result = best;
-
-    return (result.length > 0);
-}
-
-
-int runtestcase(int seed)
-{
-    srand(seed);
-   
-
-    vector<int> items(10000);
-    int sum = 0;
-
-    for (int i = 0; i < 10000; i++)
-    {
-        items[i] = (rand() % 75) - 25;
         sum += items[i];
+        summations[i] = sum;
+    }
+}
 
-        if ((sum < 100) && (items[i] > 0))
+void buildLeafRow(vector<int64_t>& summations, vector<shared_ptr<node>>& leafrow)
+{
+
+    size_t pairCount = summations.size() / 2;  // number of non-leaf nodes to add to leafrow
+    bool oddCount = summations.size() % 2;             // if odd number, we'll treat the last as a leaf node
+    size_t oddIndex = pairCount * 2;
+
+    for (size_t index = 0; index < pairCount; index++)
+    {
+        size_t firstIndex = index * 2;
+        size_t lastIndex = firstIndex + 1;
+
+        int64_t smallestValue = summations[firstIndex];
+        int64_t largestValue = summations[lastIndex];
+        if (smallestValue > largestValue)
         {
-            items[i] = -items[i];
+            swap(smallestValue, largestValue);
         }
-        else if ((sum > 100) && (items[i] < 0))
+
+        auto spNode = make_shared<node>(firstIndex, lastIndex, smallestValue, largestValue);
+        leafrow.push_back(spNode);
+    }
+
+    if (oddCount)
+    {
+        // tack on the last node as a single item leaf node
+        auto spNode = make_shared<node>(oddIndex, oddIndex, summations[oddIndex], summations[oddIndex]);
+        leafrow.push_back(spNode);
+    }
+
+}
+
+bool buildParentRow(const vector<shared_ptr<node>>& childRow, vector<shared_ptr<node>>& parentRow)
+{
+    if (childRow.size() <= 1)
+    {
+        return false;
+    }
+
+    size_t pairCount = childRow.size() / 2;  // number of non-leaf nodes to add to leafrow
+    bool oddCount = childRow.size() % 2;         // if odd number, we'll promote the last node to the parent row
+    size_t oddIndex = pairCount * 2;
+
+    for (size_t index = 0; index < pairCount; index++)
+    {
+        size_t childIndex = index * 2;
+        auto spNode = make_shared<node>(childRow[childIndex], childRow[childIndex + 1]);
+        parentRow.push_back(spNode);
+    }
+
+    if (oddCount)
+    {
+        // simply promote the last child node to the parent row
+        parentRow.push_back(childRow[oddIndex]);
+    }
+
+    return true;
+}
+
+bool solveWithBinaryTree(const vector<int>& items, int64_t maxSum, subsequence& result)
+{
+    vector<int64_t> summations;
+
+    size_t esimatedNumberOfRows = 2;
+    size_t tmp = items.size();
+    while (tmp > 0)
+    {
+        esimatedNumberOfRows++;
+        tmp /= 2;
+    }
+
+    // a vector of parent rows just to hold the nodes in memory
+    vector<vector<shared_ptr<node>>> rows;
+    rows.reserve(esimatedNumberOfRows);
+    rows.resize(1);
+
+    buildRunningSumArray(items, summations);
+    buildLeafRow(summations, rows[0]);
+
+    // build the tree up
+    bool keepGoing = true;
+    size_t lastRowIndex = 0;
+    while (keepGoing)
+    {
+        rows.resize(rows.size() + 1);
+        auto& previousRow = rows[rows.size() - 2];
+        auto& newRow = rows[rows.size() - 1];
+        keepGoing = buildParentRow(previousRow, newRow);
+        if (keepGoing)
         {
-            items[i] = -items[0];
+            lastRowIndex = rows.size() - 1;
         }
     }
 
-    subsequence result;
-    useRecursiveReduction(items, 50, result);
 
-    cout << result.length << " " << (result.startIndex + 1) << endl;
-    return 0;
+    auto spRootNodeRow = rows[lastRowIndex];
+    auto spRootNode = spRootNodeRow[0];
 
+
+    // now comes the fun part
+    // consider every index to be the starting point of the longest sequence, adjusting maxSum as we go along
+
+    int64_t target = maxSum;
+    size_t bestStart = 0;
+    size_t bestLength = 0;
+    int64_t bestSum = 0;
+    int64_t dropSum = 0;
+    for (size_t i = 0; i < summations.size(); i++)
+    {
+        size_t bestPossibleLength = summations.size() - i;
+        if (bestLength >= bestPossibleLength)
+        {
+            break; // no point in continuing
+        }
+
+        size_t resultIndex = 0;
+        bool resultFound = spRootNode->search(summations, target, i, resultIndex);
+
+        if (resultFound)
+        {
+            size_t length = resultIndex - i + 1;
+            if (length > bestLength)
+            {
+                bestStart = i;
+                bestLength = length;
+                bestSum = summations[resultIndex] - dropSum;
+            }
+        }
+
+        target += items[i]; // add from the items array, not the summations array
+        dropSum += items[i];
+    }
+
+    result.length = bestLength;
+    result.startIndex = bestStart;
+    result.sum = bestSum;
+    return true;
 }
 
 
@@ -259,18 +281,7 @@ int main()
         cin >> items[i];
     }
 
-    if (useBruteForce)
-    {
-        bruteForce(items, S, result);
-    }
-    else
-    {
-        useRecursiveReduction(items, S, result);
-    }
+    solveWithBinaryTree(items, S, result);
+
     cout << result.length << " " << (result.startIndex + 1) << endl;
 }
-
-
-
-
-
