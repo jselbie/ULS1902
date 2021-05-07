@@ -1,10 +1,25 @@
 #include <iostream>
 #include <algorithm>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <stdint.h>
 
+
 using namespace std;
+
+bool g_debugOn = false;
+bool g_assertOn = true;
+void AssertImpl(bool valid, int linenumber)
+{
+    if ((g_debugOn||g_assertOn) && !valid)
+    {
+        cout << "ASSERT AT LINE: " << linenumber << endl;
+    }
+}
+
+#define ASSERT(expr) {AssertImpl(!!(expr), __LINE__);}
+
 
 struct subsequence
 {
@@ -14,8 +29,6 @@ struct subsequence
 };
 
 
-bool g_debugOn = false;
-
 struct pair_hash {
     template <class T1, class T2>
     std::size_t operator () (const std::pair<T1, T2>& p) const {
@@ -24,9 +37,11 @@ struct pair_hash {
         return h1 ^ h2;
     }
 };
+
 class Cache
 {
-    unordered_map<std::pair<int, int>, subsequence, pair_hash> _cache;
+    unordered_map<pair<int, int>, subsequence, pair_hash> _cache;
+    unordered_set<pair<int, int>, pair_hash> _deadPaths;
 
 public:
     void insert(int start, int end, const subsequence& seq)
@@ -34,20 +49,29 @@ public:
         _cache[{start, end}] = seq;
     }
 
-    bool lookup(int start, int end, subsequence& seq)
+    bool lookup(int start, int end, subsequence& result)
     {
         auto itor = _cache.find({ start,end });
         if (itor != _cache.end())
         {
-            seq = itor->second;
+            result = itor->second;
             return true;
         }
         return false;
     }
+
+    void addDeadPath(int start, int end)
+    {
+        _deadPaths.insert({ start,end });
+    }
+
+    bool isDeadPath(int start, int end)
+    {
+        return (_deadPaths.find({ start,end }) != _deadPaths.end());
+    }
 };
 
-
-bool recursiveReduction(const vector<int>& items, int N, int64_t maxSum, int start, int end, int currentSum, subsequence& result, Cache& cache)
+bool recursiveReduction(const vector<int>& items, int64_t maxSum, int start, int end, int64_t currentSum, subsequence& result, Cache& cache)
 {
     if (g_debugOn)
     {
@@ -60,16 +84,15 @@ bool recursiveReduction(const vector<int>& items, int N, int64_t maxSum, int sta
         return true;
     }
 
+    if (cache.isDeadPath(start, end))
+    {
+        return false;
+    }
+
     if (end < start)
     {
         // THIS SHOULD NEVER HAPPEN
-        result = {};
-        result.sum = maxSum + 1;
-        //ASSERT(FALSE);
-        if (g_debugOn)
-        {
-            cout << "ERROR" << endl;
-        }
+        ASSERT(false);
         return false;
     }
 
@@ -85,22 +108,19 @@ bool recursiveReduction(const vector<int>& items, int N, int64_t maxSum, int sta
     }
 
 
-    if (left == right)
+    if (start == end)
     {
-        result.length = 1;
-        result.sum = currentSum;
-        result.startIndex = start;
-        // ASSERT(currentSum == items[start])
-
-        return(currentSum <= maxSum);
+        ASSERT(currentSum == items[start]);
+        cache.addDeadPath(start, end);
+        return false;
     }
 
     subsequence rightResult = {};
     subsequence leftResult = {};
     bool canReduceLeft, canReduceRight;
 
-    canReduceLeft = recursiveReduction(items, N, maxSum, start + 1, end, currentSum - items[start], leftResult, cache);
-    canReduceRight = recursiveReduction(items, N, maxSum, start, end - 1, currentSum - items[end], rightResult, cache);
+    canReduceLeft = recursiveReduction(items, maxSum, start + 1, end, currentSum - items[start], leftResult, cache);
+    canReduceRight = recursiveReduction(items,maxSum, start, end - 1, currentSum - items[end], rightResult, cache);
 
 
     if (canReduceLeft && canReduceRight)
@@ -139,23 +159,28 @@ bool recursiveReduction(const vector<int>& items, int N, int64_t maxSum, int sta
         cache.insert(start, end, result);
         return true;
     }
-
-    return false;
+    else
+    {
+        cache.addDeadPath(start, end);
+        return false;
+    }
 }
 
-bool useRecursiveReduction(const vector<int>& items, int N, int maxSum, subsequence& result)
+bool useRecursiveReduction(const vector<int>& items, int maxSum, subsequence& result)
 {
     Cache cache;
-    int fullSum = 0;
+    int64_t fullSum = 0;
     for_each(items.begin(), items.end(), [&fullSum](int x) {fullSum += x; });
 
-    return recursiveReduction(items, N, maxSum, 0, N - 1, fullSum, result, cache);
+    return recursiveReduction(items, maxSum, 0, items.size()-1, fullSum, result, cache);
 }
 
 
-bool bruteForce(const vector<int>& items, int N, int maxSum, subsequence& result)
+bool bruteForce(const vector<int>& items, int maxSum, subsequence& result)
 {
     subsequence best = {};
+
+    int N = items.size();
 
     for (int i = 0; i < N; i++)
     {
@@ -187,6 +212,38 @@ bool bruteForce(const vector<int>& items, int N, int maxSum, subsequence& result
 }
 
 
+int runtestcase(int seed)
+{
+    srand(seed);
+   
+
+    vector<int> items(10000);
+    int sum = 0;
+
+    for (int i = 0; i < 10000; i++)
+    {
+        items[i] = (rand() % 75) - 25;
+        sum += items[i];
+
+        if ((sum < 100) && (items[i] > 0))
+        {
+            items[i] = -items[i];
+        }
+        else if ((sum > 100) && (items[i] < 0))
+        {
+            items[i] = -items[0];
+        }
+    }
+
+    subsequence result;
+    useRecursiveReduction(items, 50, result);
+
+    cout << result.length << " " << (result.startIndex + 1) << endl;
+    return 0;
+
+}
+
+
 int main()
 {
     int N, S;
@@ -204,12 +261,16 @@ int main()
 
     if (useBruteForce)
     {
-        bruteForce(items, N, S, result);
+        bruteForce(items, S, result);
     }
     else
     {
-        useRecursiveReduction(items, N, S, result);
+        useRecursiveReduction(items, S, result);
     }
     cout << result.length << " " << (result.startIndex + 1) << endl;
 }
+
+
+
+
 
