@@ -1,5 +1,5 @@
 # ULS1902
-Solution for: https://www.spoj.com/CSMS/problems/ULS1902/  Not quite ready yet
+Solution for: https://www.spoj.com/CSMS/problems/ULS1902/  Was accepted as a valid solution by the site.
 
 
 From a given table with N members, find the longest sub-sequence whose sum does not exceed S. A sub-sequence is a set of consecutive numbers in a base table.
