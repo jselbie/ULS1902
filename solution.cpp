@@ -9,12 +9,64 @@
 
 using namespace std;
 
+bool g_debugOn = false;
+bool g_assertOn = false;
+void AssertImpl(bool valid, int linenumber)
+{
+    if ((g_debugOn||g_assertOn) && !valid)
+    {
+        cout << "ASSERT AT LINE: " << linenumber << endl;
+    }
+}
+
+#define ASSERT(expr) {AssertImpl(!!(expr), __LINE__);}
+
+
 struct subsequence
 {
-    int startIndex;
-    int length;
+    size_t startIndex;
+    size_t length;
     int64_t sum;
 };
+
+
+// brute force is an all to simple, but slow implementation
+// but it works well for validating any other solution
+bool bruteForce(const vector<int>& items, int maxSum, subsequence& result)
+{
+    subsequence best = {};
+
+    size_t N = items.size();
+
+    for (int i = 0; i < N; i++)
+    {
+        if ((N - i) <= best.length)
+        {
+            // no point in continuing if we can't do any better
+            break;
+        }
+
+        subsequence current;
+        current.length = 0;
+        current.startIndex = i;
+        current.sum = 0;
+
+        for (int j = i; j < N; j++)
+        {
+            current.sum += items[j];
+            current.length += 1;
+            if ((current.sum <= maxSum) && (current.length > best.length))
+            {
+                best = current;
+            }
+        }
+    }
+
+    result = best;
+
+    return (result.length > 0);
+}
+
 
 struct node
 {
@@ -33,7 +85,7 @@ struct node
     // iLast: last index in the summation array
     // smallest: smallest value in this subsequence
     // largest: largest value in this subsequence
-    node(size_t iFirst, size_t iLast, int64_t smallest, int64_t largest) :
+    node(size_t iFirst, size_t iLast, int64_t smallest, int64_t largest):
         isLeaf(true),
         left(nullptr),
         right(nullptr),
@@ -93,6 +145,7 @@ struct node
             return found;
         }
 
+        // visit the right node first to find values that are less than or equal to maxSum, but at higher index numbers
         if (this->right != nullptr)
         {
             if (this->right->search(summations, maxSum, leftEdge, resultIndex))
@@ -107,6 +160,7 @@ struct node
         }
 
         // assert - we should never get here
+        ASSERT(false);
         return false;
     }
 };
@@ -165,7 +219,7 @@ bool buildParentRow(const vector<shared_ptr<node>>& childRow, vector<shared_ptr<
         return false;
     }
 
-    size_t pairCount = childRow.size() / 2;  // number of non-leaf nodes to add to leafrow
+    size_t pairCount = childRow.size()/2;  // number of non-leaf nodes to add to leafrow
     bool oddCount = childRow.size() % 2;         // if odd number, we'll promote the last node to the parent row
     size_t oddIndex = pairCount * 2;
 
@@ -189,41 +243,25 @@ bool solveWithBinaryTree(const vector<int>& items, int64_t maxSum, subsequence& 
 {
     vector<int64_t> summations;
 
-    size_t esimatedNumberOfRows = 2;
-    size_t tmp = items.size();
-    while (tmp > 0)
-    {
-        esimatedNumberOfRows++;
-        tmp /= 2;
-    }
+    vector<shared_ptr<node>> previousRow, currentRow;
 
-    // a vector of parent rows just to hold the nodes in memory
-    vector<vector<shared_ptr<node>>> rows;
-    rows.reserve(esimatedNumberOfRows);
-    rows.resize(1);
+    result = {};
 
     buildRunningSumArray(items, summations);
-    buildLeafRow(summations, rows[0]);
+    buildLeafRow(summations, previousRow);
 
     // build the tree up
-    bool keepGoing = true;
-    size_t lastRowIndex = 0;
-    while (keepGoing)
+
+    while (buildParentRow(previousRow, currentRow))
     {
-        rows.resize(rows.size() + 1);
-        auto& previousRow = rows[rows.size() - 2];
-        auto& newRow = rows[rows.size() - 1];
-        keepGoing = buildParentRow(previousRow, newRow);
-        if (keepGoing)
-        {
-            lastRowIndex = rows.size() - 1;
-        }
+        previousRow = std::move(currentRow);
+        currentRow.clear();
     }
 
+    // the last row should just have one element in it
+    ASSERT(previousRow.size() == 1);
 
-    auto spRootNodeRow = rows[lastRowIndex];
-    auto spRootNode = spRootNodeRow[0];
-
+    auto spRootNode = previousRow[0];
 
     // now comes the fun part
     // consider every index to be the starting point of the longest sequence, adjusting maxSum as we go along
@@ -262,12 +300,45 @@ bool solveWithBinaryTree(const vector<int>& items, int64_t maxSum, subsequence& 
     result.length = bestLength;
     result.startIndex = bestStart;
     result.sum = bestSum;
-    return true;
+    return (result.length > 0);
 }
+
+
+void runTestCase(int seed)
+{
+
+    srand(seed);
+
+
+    const size_t COUNT = 100000;
+    vector<int> items;
+    items.resize(COUNT);
+
+    for (size_t i = 0; i < COUNT; i++)
+    {
+        items[i] = rand() % 1000 - 200;
+    }
+
+    cout << "running test case # " << seed << endl;
+    subsequence result = {};
+    solveWithBinaryTree(items, 5000, result);
+
+    cout << result.length << " " << (result.startIndex + 1) << " " << result.sum << endl;
+
+    result = {};
+    bruteForce(items, 5000, result);
+    cout << result.length << " " << (result.startIndex + 1) << " " << result.sum << endl;
+
+}
+
+
 
 
 int main()
 {
+    //runTestCase(444);
+    //return 0;
+
     int N, S;
 
     bool useBruteForce = false; // for correctness validation
@@ -281,7 +352,14 @@ int main()
         cin >> items[i];
     }
 
-    solveWithBinaryTree(items, S, result);
+    if (useBruteForce)
+    {
+        bruteForce(items, S, result);
+    }
+    else
+    {
+        solveWithBinaryTree(items, S, result);
+    }
 
     cout << result.length << " " << (result.startIndex + 1) << endl;
 }
