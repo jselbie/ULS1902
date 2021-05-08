@@ -212,7 +212,7 @@ And then the code to repeat the search for subsequent starting index points:
 
 
 
-The above runs in approximately **O(N lg N)** time.
+The above runs in approximately **O(N lg N)** time.  **O(N)** to build the summation array.  Approximately **O(N)** to build the binary tree.  Then in the worse case scenario, **N** searches on the binary tree, each taking **lg N** time.  Hence **O(N)+O(N)+O(N lg N) ==> O(N lg N)**
 
 
 
